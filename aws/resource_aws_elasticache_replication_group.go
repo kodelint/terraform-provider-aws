@@ -134,6 +134,36 @@ func resourceAwsElasticacheReplicationGroup() *schema.Resource {
 				Optional: true,
 				Default:  false,
 			},
+			"node_group_configuration": {
+				Type:     schema.TypeList,
+				Optional: true,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"primary_availability_zone": {
+							Type:     schema.TypeString,
+							Optional: true,
+						},
+						"replica_availability_zones": {
+							Type:     schema.TypeList,
+							Optional: true,
+							Elem: &schema.Schema{
+								Type: schema.TypeString,
+							},
+						},
+						"replica_count": {
+							Type:     schema.TypeInt,
+							Optional: true,
+						},
+						"slots": {
+							Type:     schema.TypeList,
+							Required: true,
+							Elem: &schema.Schema{
+								Type: schema.TypeString,
+							},
+						},
+					},
+				},
+			},
 			"node_type": {
 				Type:     schema.TypeString,
 				Optional: true,
@@ -360,7 +390,37 @@ func resourceAwsElasticacheReplicationGroupCreate(d *schema.ResourceData, meta i
 	}
 
 	if snaps := d.Get("snapshot_arns").(*schema.Set); snaps.Len() > 0 {
-		params.SnapshotArns = expandStringSet(snaps)
+		nodeGroupConfigurationMode, nodeGroupConfigurationOk := d.GetOk("node_group_configuration")
+		if nodeGroupConfigurationOk {
+			var nodeGroupConfigurationList []*elasticache.NodeGroupConfiguration
+			var nodeGroupConfiguration elasticache.NodeGroupConfiguration
+			var slots, replicaAzs []interface{}
+			var primaryAz interface{}
+			if nodeGroupConfigurationOk {
+				ngsList := nodeGroupConfigurationMode.([]interface{})
+				attributes := ngsList[0].(map[string]interface{})
+				if v, ok := attributes["slots"]; ok {
+					slots = v.([]interface{})
+				}
+				if v, ok := attributes["primary_availability_zone"]; ok {
+					primaryAz = v
+				}
+				if v, ok := attributes["replica_availability_zones"]; ok {
+					replicaAzs = v.([]interface{})
+				}
+				for _, slot := range slots {
+					nodeGroupConfiguration.Slots = aws.String(slot.(string))
+					nodeGroupConfiguration.PrimaryAvailabilityZone = aws.String(primaryAz.(string))
+					nodeGroupConfiguration.ReplicaAvailabilityZones = expandStringList(replicaAzs)
+					placeholder := nodeGroupConfiguration
+					nodeGroupConfigurationList = append(nodeGroupConfigurationList, &placeholder)
+				}
+				params.NodeGroupConfiguration = nodeGroupConfigurationList
+				params.SnapshotArns = expandStringSet(snaps)
+			}
+		} else {
+			return fmt.Errorf("`snapshot_arns` needs `node_group_configuration` block with `slots` ")
+		}
 	}
 
 	if v, ok := d.GetOk("maintenance_window"); ok {
